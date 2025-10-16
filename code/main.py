@@ -7,10 +7,10 @@ from enemy import Enemy
 
 pygame.init
 
-screen_widht = 400
-screen_height = 600
+SCREEN_WIDTH = 400
+SCREEN_HEIGHT = 600
 
-screen = pygame.display.set_mode((screen_widht, screen_height))
+screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
 pygame.display.set_caption("kkkkkk")
 icon = pygame.image.load("jogo 2d/assets/png")
 pygame.display.set_icon(icon)
@@ -102,8 +102,133 @@ class Player():
         # Gravity
         self.vel_y += GRAVITY
         dy += self.vel_y
+        
+        # screen limite for player
+        if self.rect.left + dx < 0:
+            dx = self.rect.left
+        if self.rect.right + dx > SCREEN_WIDTH:
+            dx = SCREEN_WIDTH - self.rect.right
+            
+        # check collosion with plataforms
+        for platform in platform_group:
+            # collosion in y direction
+            if platform.rect.colliderect(self.rect.x, self.rect.y + dy, self.width, self.height):
+                # check if above platform
+                if self.rect.bottom < platform.rect.centery:
+                    if self.vel_y > 0:
+                        self.rect.bottom = platform.rect.top
+                        dy = 0
+                        self.vel_y = -20
+                        jump_fx.play()
+                        
+        # check if player has bounced to the top of the screen
+        if self.rect.top <= SCROLL_THRESH:
+            # if player is jumping
+            if self.vel_y < 0:
+                scroll = -dy
+                
+        # update rect position
+        self.rect.x += dx
+        self.rect.y += dy + scroll
+        
+        # update mask
+        self.mask = pygame.mask.from_surface(self.image)
     
+        return scroll
     
+    def draw(self):
+        screen.blit(pygame.transform.flip(self.image, self.flip, False), (self.rect.x - 12, self.rect.y - 5)) 
+        
+# platform class
+class platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, moving):
+        pygame.sprite.Sprite.__init__(self)
+        self.image = pygame.transform.scale(platform_image, (width, 10))
+        self.moving = moving
+        self.move_counter = random.randint(0, 50)
+        self.direction = random.choice([-1, 1])
+        self.speed = random.randint(1, 2)
+        self.rect = self.image.get_rect()
+        self.rect.x = x
+        self.rect.y = y
+        
+    def update(self, scroll):
+        # moving platform side to side
+        if self.moving == True:
+            self.move_counter += 1
+            self.rect.x += self.direction * self.speed
+            
+        # change platform direction if it has moved fully or hit a wall
+        if self.move_counter >= 100 or self.rect.left < 0 or self.rect.right > SCREEN_WIDTH:
+            self.direction *= -1
+            self.move_counter = 0
+            
+        # update vertical position
+        self.rect.y += scroll
+        
+        # check if platform has gone off the screen
+        if self.rect.top > SCREEN_HEIGHT:
+            self.kill()
+            
+# Player instance
+jumpy = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 150)
+
+# create sprite groups
+platform_group = pygame.sprite.Group()
+enemy_group = pygame.sprite.Group()
+
+# create starting platforms
+platform = platform(SCREEN_WIDTH // 2 - 50, SCREEN_HEIGHT - 50, 100, False)
+platform_group.add(platform)
+
+# game loop
+
+run = True
+while run:
+    
+    clock.tick(FPS)
+    
+    if game_over == False:
+        scroll = jumpy.move()
+        
+        # draw bg
+        bg_scroll += scroll
+        if bg_scroll >= 600:
+            bg_scroll = 0
+        draw_bg(bg_scroll)
+        
+        # generate platform
+        if len(platform_group) < MAX_PLATFORMS:
+            p_w = random.randint(40,60)
+            p_x = random.randint(0, SCREEN_WIDTH - p_w)
+            p_y = platform.rect.y - random.randint(1, 2)
+            p_type = random.randint(1, 2)
+            if p_type == 1 and score > 1000:
+                p_moving = True
+            else:
+                p_moving = False
+            platform = platform(p_x, p_y, p_w, p_moving)
+            platform_group.add(platform)
+            
+        # update platform
+        platform_group.update(scroll)
+        
+        # generate enemies 
+        if len(enemy_group) == 0 and score > 2000:
+            enemy = Enemy(SCREEN_WIDTH, 100, bird_sheet, 1.5)
+            enemy_group.add(enemy)
+            
+        # update enemies
+        enemy_group.update(scroll, SCREEN_WIDTH)
+        
+        # update score
+        if scroll > 0:
+            score += scroll
+            
+        # draw
+        pygame.draw.line()
+        
+        
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             # update high score
