@@ -1,243 +1,493 @@
 import pygame
+import sys
 import random
 import os
 from pygame import mixer
-from spritesheet import SpriteSheet
-from enemy import Enemy
 
-pygame.init
-
-SCREEN_WIDTH = 400
-SCREEN_HEIGHT = 600
-
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("kkkkkk")
-icon = pygame.image.load("jogo 2d/assets/png")
-pygame.display.set_icon(icon)
-
-clock = pygame.time.Clock()
-FPS = 60
-
-pygame.mixer.music.load("jogo 2d/assets/")
-pygame.mixer.set_volume(0.3)
-pygame.mixer.music.play(-1, 0.0)
-jump_fx = pygame.mixer.Sound("jogo 2d/  ")
-jump_fx.set_volume(1)
-death_fx = pygame.mixer.Sound("jodo 2d/  ")
-death_fx.set_volume(1)
-
-# variables game
-
-SCROLL_THRESH = 200
+# --- CONSTANTES ---
+WIN_WIDTH = 400
+WIN_HEIGHT = 600
 GRAVITY = 1
-MAX_PLATFORMS = 10
-scroll = 0
-bg_scroll = 0
-game_over = False
-score = 0
-fade_counter = 0
+FPS = 60
+SCROLL_THRESH = 200
+MENU_OPTION = ["INICIAR PARTIDA", "HIGH SCORE", "TUTORIAL", "SAIR"]
 
-if os.path.exists("score.txt"):
-    with open("score.txt", "r") as file:
-        high_score = int(file.read())
-else: 
-    high_score = 0
-    
-# colours
+C_WHITE = (255, 255, 255)
+C_BLACK = (0, 0, 0)
+C_RED = (255, 0, 0)
+C_AZUL_CLARO = (173, 216, 230)
+C_DARK_BLUE = (30, 30, 60)
+C_BRIGHT_YELLOW = (255, 255, 100)
+C_ORANGE = (255, 165, 0)
+C_YELLOW = (255, 255, 0)
+C_OUTLINE = (0, 0, 0)
 
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
+# --- INICIALIZAÇÃO ---
+pygame.init()
+mixer.init()
+tela = pygame.display.set_mode((WIN_WIDTH, WIN_HEIGHT))
+pygame.display.set_caption("JUMPING HIGH")
+clock = pygame.time.Clock()
 
-font_small = pygame.font.SysFont("Lucida Sans", 20)
-font_big = pygame.font.SysFont("Lucida Sans", 24)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSETS_DIR = "assets"
 
-# load imagens
-jumpy_image = pygame
-bg_image = pygame
-platform_image = pygame
+def get_asset_path(_, filename):
+    return os.path.join(BASE_DIR, ASSETS_DIR, filename)
 
-# bird spritesheet
+class MockSound:
+    play = staticmethod(lambda *a, **k: None)
+    set_volume = staticmethod(lambda *a, **k: None)
 
-bird_sheet_img = pygame
-bird_sheet = SpriteSheet(bird_sheet_img)
+# --- Funções auxiliares ---
+def load_bg(filename, fallback_color, win_width, win_height):
+    full_path = get_asset_path(None, filename)
+    try:
+        img = pygame.image.load(full_path).convert()
+        return pygame.transform.scale(img, (win_width, win_height))
+    except:
+        surf = pygame.Surface((win_width, win_height))
+        surf.fill(fallback_color)
+        return surf
 
-def draw_text(text, font, text_col, x, y):
-    img =- font.render(text, True, text_col)
-    screen.blit(img, (x, y))
-    
-# draw panel info
-def draw_panel():
-    
-    draw_text("score: " + str(score), font_small, WHITE, 0, 0)
-    
-# function for drawing bg
-def draw_bg(bg_scroll):
-    screen.blit(bg_image, (0, 0 + bg_scroll))
-    screen.blit(bg_image, (0, -600 + bg_scroll))
-    
-# Player class
-class Player():
+def draw_text_styled(screen, text, font, text_col, x, y, centered=False, outline_col=C_OUTLINE):
+    shadow_offset = 2
+    shadow = font.render(text, True, outline_col)
+    text_surface = font.render(text, True, text_col)
+    if centered:
+        screen.blit(shadow, shadow.get_rect(center=(x + shadow_offset, y + shadow_offset)))
+        screen.blit(text_surface, text_surface.get_rect(center=(x, y)))
+    else:
+        screen.blit(shadow, (x + shadow_offset, y + shadow_offset))
+        screen.blit(text_surface, (x, y))
+
+def load_spritesheet(filename, frame_width, frame_height, scale=1.0):
+    full_path = get_asset_path(None, filename)
+    try:
+        sheet = pygame.image.load(full_path).convert_alpha()
+    except:
+        placeholder = pygame.Surface((int(frame_width*scale), int(frame_height*scale)), pygame.SRCALPHA)
+        placeholder.fill(C_RED)
+        return [placeholder]
+
+    sheet_width = sheet.get_width()
+    frames = []
+    if sheet_width < frame_width:
+        frame = pygame.transform.scale(sheet, (int(frame_width*scale), int(frame_height*scale)))
+        frames.append(frame)
+    else:
+        num_frames = sheet_width // frame_width
+        for i in range(num_frames):
+            frame = sheet.subsurface((i*frame_width, 0, frame_width, frame_height))
+            frame = pygame.transform.scale(frame, (int(frame_width*scale), int(frame_height*scale)))
+            frames.append(frame)
+    return frames
+
+# --- PLAYER ---
+class Player(pygame.sprite.Sprite):
+    SCALE = 1.5
+    FRAME_WIDTH = 30
+    FRAME_HEIGHT = 48
+    ANIMATION_SPEED = 5
+
     def __init__(self, x, y):
-        self.image = pygame.transform.scale(jumpy_image, (45, 45))
-        self.width = 25
-        self.height = 40
-        self.rect = pygame.Rect(0, 0, self.width, self.height)
-        self.rect.center = (x, y)
+        super().__init__()
+        self.images_right = load_spritesheet('jumpy_right.png', self.FRAME_WIDTH, self.FRAME_HEIGHT, self.SCALE)
+        self.images_left = [pygame.transform.flip(img, True, False) for img in self.images_right]
+        self.image = self.images_right[0]
+        self.rect = pygame.Rect(0,0,int(self.FRAME_WIDTH*self.SCALE*0.7),int(self.FRAME_HEIGHT*self.SCALE*0.9))
+        self.rect.center = (x,y)
         self.vel_y = 0
-        self.flip = False
-        
-    def move(self):
-        # reset variable
-        scroll = 0
-        dx = 0
-        dy = 0 
-        
+        self.is_moving_x = False
+        self.current_direction = 'R'
+        self.last_direction = self.current_direction
+        self.frame_index = 0
+        self.update_tick = 0
+
+    def move(self, platform_group, jump_fx):
+        scroll = dx = dy = 0
         key = pygame.key.get_pressed()
-        if key[pygame.k_a]:
+        if key[pygame.K_a]:
             dx = -10
-            self.flip = False
-        if key[pygame.k_d]:
+            self.current_direction = 'L'
+        if key[pygame.K_d]:
             dx = 10
-            self.flip = True
-        # Gravity
+            self.current_direction = 'R'
+
+        self.is_moving_x = (dx != 0)
         self.vel_y += GRAVITY
         dy += self.vel_y
-        
-        # screen limite for player
-        if self.rect.left + dx < 0:
-            dx = self.rect.left
-        if self.rect.right + dx > SCREEN_WIDTH:
-            dx = SCREEN_WIDTH - self.rect.right
-            
-        # check collosion with plataforms
+        self.rect.x = (self.rect.x + dx) % WIN_WIDTH
+
         for platform in platform_group:
-            # collosion in y direction
-            if platform.rect.colliderect(self.rect.x, self.rect.y + dy, self.width, self.height):
-                # check if above platform
-                if self.rect.bottom < platform.rect.centery:
-                    if self.vel_y > 0:
-                        self.rect.bottom = platform.rect.top
-                        dy = 0
-                        self.vel_y = -20
-                        jump_fx.play()
-                        
-        # check if player has bounced to the top of the screen
-        if self.rect.top <= SCROLL_THRESH:
-            # if player is jumping
-            if self.vel_y < 0:
-                scroll = -dy
-                
-        # update rect position
-        self.rect.x += dx
+            if platform.rect.colliderect(self.rect.x, self.rect.y + dy, self.rect.width, self.rect.height):
+                if self.rect.bottom < platform.rect.centery and self.vel_y > 0:
+                    self.rect.bottom = platform.rect.top
+                    dy = 0
+                    self.vel_y = -20
+                    jump_fx.play()
+
+        if self.rect.top <= SCROLL_THRESH and self.vel_y < 0:
+            scroll = -dy
         self.rect.y += dy + scroll
-        
-        # update mask
-        self.mask = pygame.mask.from_surface(self.image)
-    
         return scroll
-    
-    def draw(self):
-        screen.blit(pygame.transform.flip(self.image, self.flip, False), (self.rect.x - 12, self.rect.y - 5)) 
-        
-# platform class
-class platform(pygame.sprite.Sprite):
-    def __init__(self, x, y, width, moving):
-        pygame.sprite.Sprite.__init__(self)
-        self.image = pygame.transform.scale(platform_image, (width, 10))
+
+    def update_animation(self):
+        animation_list = self.images_right if self.current_direction=='R' else self.images_left
+        if self.last_direction != self.current_direction:
+            self.frame_index = 0
+            self.update_tick = 0
+        self.last_direction = self.current_direction
+        self.update_tick += 1
+        if self.update_tick >= self.ANIMATION_SPEED:
+            self.update_tick = 0
+            self.frame_index = (self.frame_index + 1) % len(animation_list)
+        self.image = animation_list[self.frame_index]
+
+    def draw(self, screen):
+        self.update_animation()
+        screen.blit(self.image,(self.rect.x-(self.image.get_width()-self.rect.width)//2,
+                                self.rect.y-(self.image.get_height()-self.rect.height)//2))
+
+# --- PLATFORM ---
+class Platform(pygame.sprite.Sprite):
+    def __init__(self, x, y, width, moving, platform_image):
+        super().__init__()
+        scale_height = int(platform_image.get_height() * (width / platform_image.get_width()))
+        self.image = pygame.transform.scale(platform_image, (width, scale_height))
         self.moving = moving
-        self.move_counter = random.randint(0, 50)
-        self.direction = random.choice([-1, 1])
-        self.speed = random.randint(1, 2)
-        self.rect = self.image.get_rect()
-        self.rect.x = x
-        self.rect.y = y
-        
+        self.direction = random.choice([-1,1])
+        self.speed = random.randint(1,2)
+        self.move_counter = random.randint(0,50)
+        self.rect = self.image.get_rect(topleft=(x,y))
+
     def update(self, scroll):
-        # moving platform side to side
-        if self.moving == True:
+        if self.moving:
             self.move_counter += 1
             self.rect.x += self.direction * self.speed
-            
-        # change platform direction if it has moved fully or hit a wall
-        if self.move_counter >= 100 or self.rect.left < 0 or self.rect.right > SCREEN_WIDTH:
+        if self.move_counter >= 100 or self.rect.left<0 or self.rect.right>WIN_WIDTH:
             self.direction *= -1
             self.move_counter = 0
-            
-        # update vertical position
         self.rect.y += scroll
-        
-        # check if platform has gone off the screen
-        if self.rect.top > SCREEN_HEIGHT:
+        if self.rect.top>WIN_HEIGHT:
             self.kill()
-            
-# Player instance
-jumpy = Player(SCREEN_WIDTH // 2, SCREEN_HEIGHT - 150)
 
-# create sprite groups
-platform_group = pygame.sprite.Group()
-enemy_group = pygame.sprite.Group()
+# --- MENU ---
+class Menu:
+    def __init__(self, screen):
+        self.screen = screen
+        self.clock = pygame.time.Clock()
+        self.font_title = pygame.font.SysFont("Lucida Sans", 50, bold=True)
+        self.font_options = pygame.font.SysFont("Lucida Sans", 24, bold=True)
+        self.font_tutorial = pygame.font.SysFont("Lucida Sans", 20, bold=True)
+        self.bg = load_bg("bg.png", C_DARK_BLUE, WIN_WIDTH, WIN_HEIGHT)
 
-# create starting platforms
-platform = platform(SCREEN_WIDTH // 2 - 50, SCREEN_HEIGHT - 50, 100, False)
-platform_group.add(platform)
+        # Caminhos de áudio
+        self.menu_music_path = get_asset_path(None, "music.mp3")
+        self.sound_move_path = get_asset_path("sounds", "move.mp3")
+        self.sound_select_path = get_asset_path("sounds", "select.wav")
 
-# game loop
+        # Carregar sons
+        self.sound_move = self.load_sound(self.sound_move_path, volume=0.5)
+        self.sound_select = self.load_sound(self.sound_select_path, volume=0.7)
 
-run = True
-while run:
-    
-    clock.tick(FPS)
-    
-    if game_over == False:
-        scroll = jumpy.move()
-        
-        # draw bg
-        bg_scroll += scroll
-        if bg_scroll >= 600:
-            bg_scroll = 0
-        draw_bg(bg_scroll)
-        
-        # generate platform
-        if len(platform_group) < MAX_PLATFORMS:
-            p_w = random.randint(40,60)
-            p_x = random.randint(0, SCREEN_WIDTH - p_w)
-            p_y = platform.rect.y - random.randint(1, 2)
-            p_type = random.randint(1, 2)
-            if p_type == 1 and score > 1000:
-                p_moving = True
+    def load_sound(self, path, volume=1.0):
+        if os.path.exists(path):
+            sound = mixer.Sound(path)
+            sound.set_volume(volume)
+            return sound
+        return None
+
+    def play_sound(self, sound):
+        if sound:
+            sound.play()
+
+    def play_menu_music(self):
+        """Reproduz a música do menu (caso não esteja tocando)."""
+        if os.path.exists(self.menu_music_path):
+            if not mixer.music.get_busy():  # evita reiniciar repetidamente
+                mixer.music.load(self.menu_music_path)
+                mixer.music.set_volume(0.3)
+                mixer.music.play(-1)
+
+    def show_tutorial(self):
+        """Mostra a tela de tutorial e volta ao menu ao apertar ESC ou ENTER."""
+        running = True
+        while running:
+            self.screen.fill(C_DARK_BLUE)
+            draw_text_styled(self.screen, "TUTORIAL", self.font_title, C_ORANGE, WIN_WIDTH//2, 80, True)
+            draw_text_styled(self.screen, "Use A e D para mover o jogador", self.font_tutorial, C_WHITE, WIN_WIDTH//2, 200, True)
+            draw_text_styled(self.screen, "Evite cair e suba nas plataformas", self.font_tutorial, C_WHITE, WIN_WIDTH//2, 230, True)
+            draw_text_styled(self.screen, "Setas ↑ e ↓ para navegar no menu", self.font_tutorial, C_WHITE, WIN_WIDTH//2, 260, True)
+            draw_text_styled(self.screen, "Pressione ESC para voltar ao menu", self.font_tutorial, C_YELLOW, WIN_WIDTH//2, 400, True)
+
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key in [pygame.K_ESCAPE, pygame.K_RETURN]:
+                        running = False  # volta ao menu
+
+    def run(self):
+        self.play_menu_music()
+        menu_option = 0
+
+        while True:
+            self.clock.tick(30)
+            self.screen.blit(self.bg, (0, 0))
+            draw_text_styled(self.screen, "Jumping", self.font_title, C_ORANGE, WIN_WIDTH // 2, 70, True)
+            draw_text_styled(self.screen, "High", self.font_title, C_ORANGE, WIN_WIDTH // 2, 120, True)
+
+            for i, option in enumerate(MENU_OPTION):
+                color = C_YELLOW if i == menu_option else C_WHITE
+                draw_text_styled(self.screen, option, self.font_options, color, WIN_WIDTH // 2, 200 + 35 * i, True)
+
+            pygame.display.flip()
+
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    pygame.quit()
+                    sys.exit()
+
+                if event.type == pygame.KEYDOWN:
+                    if event.key == pygame.K_DOWN:
+                        menu_option = (menu_option + 1) % len(MENU_OPTION)
+                        self.play_sound(self.sound_move)
+                    elif event.key == pygame.K_UP:
+                        menu_option = (menu_option - 1) % len(MENU_OPTION)
+                        self.play_sound(self.sound_move)
+                    elif event.key in [pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE]:
+                        self.play_sound(self.sound_select)
+
+                        # só para a música se for iniciar o jogo
+                        if MENU_OPTION[menu_option] == "INICIAR PARTIDA":
+                            mixer.music.stop()
+                            return 'game'
+                        elif MENU_OPTION[menu_option] == "HIGH SCORE":
+                            return 'high_score'
+                        elif MENU_OPTION[menu_option] == "TUTORIAL":
+                            self.show_tutorial()
+                            self.play_menu_music()  # retoma música se tiver parado
+                        elif MENU_OPTION[menu_option] == "SAIR":
+                            pygame.quit()
+                            sys.exit()
+
+# --- GAME ---
+class Game:
+    def __init__(self, screen, high_score_ref):
+        self.screen = screen
+        self.clock = pygame.time.Clock()
+        self.scroll = self.score = 0
+        self.game_over = False
+        self.victory = False
+        self.high_score_ref = high_score_ref
+        self.music_playing = False  # controla se a música já começou
+
+        # BG
+        self.bg_day = load_bg("bg_day_sky.png", C_AZUL_CLARO, WIN_WIDTH, WIN_HEIGHT)
+        self.bg_night = load_bg("bg_night_sky.png", C_DARK_BLUE, WIN_WIDTH, WIN_HEIGHT)
+        self.bg_clouds = pygame.image.load(get_asset_path(None,"bg_clouds.png")).convert_alpha()
+        self.bg_clouds = pygame.transform.scale(self.bg_clouds,(WIN_WIDTH,WIN_HEIGHT))
+        self.cloud_x = 0
+        self.cloud_speed = 0.3
+
+        try:
+            moon_img_raw = pygame.image.load(get_asset_path(None,"bg_moon.png")).convert_alpha()
+        except:
+            moon_img_raw = pygame.Surface((100,100),pygame.SRCALPHA)
+            pygame.draw.circle(moon_img_raw,C_BRIGHT_YELLOW,(50,50),50)
+        self.moon = pygame.transform.scale(moon_img_raw,(80,80))
+
+        # Player
+        self.jumpy = Player(WIN_WIDTH//2, WIN_HEIGHT-150)
+
+        # Plataforma
+        try:
+            self.platform_image = pygame.image.load(get_asset_path(None,"platform.png")).convert_alpha()
+        except:
+            self.platform_image = pygame.Surface((100,40))
+            self.platform_image.fill((0,200,0))
+
+        # Sons
+        try:
+            self.jump_fx = mixer.Sound(get_asset_path(None,"jump.mp3"))
+            self.jump_fx.set_volume(0.2)
+        except: self.jump_fx = MockSound()
+        try:
+            self.death_fx = mixer.Sound(get_asset_path(None,"death.mp3"))
+        except: self.death_fx = MockSound()
+        try:
+            music_path = get_asset_path(None,"music1.mp3")
+            if os.path.exists(music_path):
+                self.music_path = music_path
+        except:
+            self.music_path = None
+
+        self.platform_group = pygame.sprite.Group()
+        self.create_platforms()
+        self.font_small = pygame.font.SysFont("Arial",18,bold=True)
+        self.font_big = pygame.font.SysFont("Arial",28,bold=True)
+
+    def create_platforms(self):
+        self.platform_group.empty()
+        base = Platform(WIN_WIDTH//2-50, WIN_HEIGHT-50, 100, False, self.platform_image)
+        self.platform_group.add(base)
+        for i in range(5):
+            p_w = random.randint(90, 120)
+            p_x = random.randint(0, WIN_WIDTH-p_w)
+            p_y = WIN_HEIGHT-150-(i*100)
+            moving = random.choice([True, False])
+            self.platform_group.add(Platform(p_x,p_y,p_w,moving,self.platform_image))
+
+    def draw_bg(self):
+        is_night = self.score>=2000
+        sky = self.bg_night if is_night else self.bg_day
+        self.screen.blit(sky,(0,0))
+
+        if not is_night:
+            # anima nuvens
+            self.cloud_x -= self.cloud_speed
+            if self.cloud_x <= -WIN_WIDTH:
+                self.cloud_x = 0
+            self.screen.blit(self.bg_clouds,(self.cloud_x,0))
+            self.screen.blit(self.bg_clouds,(self.cloud_x + WIN_WIDTH,0))
+        else:
+            self.screen.blit(self.moon,(WIN_WIDTH-100,20))
+
+    def draw_panel(self):
+        draw_text_styled(self.screen, f"SCORE: {self.score}", self.font_small, C_WHITE, 10, 10)
+
+    def reset_game(self):
+        self.scroll = self.score = 0
+        self.game_over = False
+        self.victory = False
+        self.jumpy.rect.center = (WIN_WIDTH//2, WIN_HEIGHT-150)
+        self.jumpy.vel_y = 0
+        self.create_platforms()
+
+        # Inicia música do jogo
+        if self.music_path:
+            mixer.music.load(self.music_path)
+            mixer.music.set_volume(0.5)  # volume mais alto no jogo
+            mixer.music.play(-1)
+            self.music_playing = True
+
+    def run(self):
+        self.reset_game()
+        while True:
+            self.clock.tick(FPS)
+            if not self.game_over and not self.victory:
+                self.scroll = self.jumpy.move(self.platform_group,self.jump_fx)
+                self.draw_bg()
+                self.platform_group.update(self.scroll)
+                self.platform_group.draw(self.screen)
+
+                # Criar novas plataformas conforme o scroll
+                if len(self.platform_group) < 6:
+                    p_w = random.randint(90, 120)
+                    p_x = random.randint(0, WIN_WIDTH-p_w)
+                    if self.platform_group.sprites():
+                        highest = min(p.rect.top for p in self.platform_group)
+                        p_y = highest - random.randint(70, 120)
+                    else:
+                        p_y = WIN_HEIGHT - random.randint(150,200)
+                    moving = random.choice([True, False])
+                    self.platform_group.add(Platform(p_x,p_y,p_w,moving,self.platform_image))
+
+                self.jumpy.draw(self.screen)
+                if self.scroll>0: self.score += int(self.scroll*0.5)
+                self.draw_panel()  # Score no canto superior esquerdo
+
+                # Vitória ou morte
+                if self.score>=4000:
+                    self.victory=True
+                    if self.music_playing:
+                        mixer.music.stop()
+                        self.music_playing = False
+                if self.jumpy.rect.top>WIN_HEIGHT:
+                    self.game_over=True
+                    self.death_fx.play()
+                    if self.music_playing:
+                        mixer.music.stop()
+                        self.music_playing = False
+
             else:
-                p_moving = False
-            platform = platform(p_x, p_y, p_w, p_moving)
-            platform_group.add(platform)
-            
-        # update platform
-        platform_group.update(scroll)
-        
-        # generate enemies 
-        if len(enemy_group) == 0 and score > 2000:
-            enemy = Enemy(SCREEN_WIDTH, 100, bird_sheet, 1.5)
-            enemy_group.add(enemy)
-            
-        # update enemies
-        enemy_group.update(scroll, SCREEN_WIDTH)
-        
-        # update score
-        if scroll > 0:
-            score += scroll
-            
-        # draw
-        pygame.draw.line()
-        
-        
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            # update high score
-            if score > high_score:
-                high_score = score
-                with open("score.txt", "w") as file:
-                    file.write(str(high_score))
-            run = False
-    # update display
-    pygame.display.update()
-    
-pygame.quit()
+                if self.score > self.high_score_ref[0]:
+                    self.high_score_ref[0] = self.score
+
+                if self.victory:
+                    draw_text_styled(self.screen,"PARABÉNS! Você",self.font_big,C_ORANGE,WIN_WIDTH//2,WIN_HEIGHT//2-50,True)
+                    draw_text_styled(self.screen,f"SCORE: {self.score}",self.font_big,C_WHITE,WIN_WIDTH//2,WIN_HEIGHT//2,True)
+                    draw_text_styled(self.screen,"R - JOGAR NOVAMENTE",self.font_small,C_YELLOW,WIN_WIDTH//2,WIN_HEIGHT//2+50,True)
+                    draw_text_styled(self.screen,"ESC - VOLTAR AO MENU",self.font_small,C_YELLOW,WIN_WIDTH//2,WIN_HEIGHT//2+80,True)
+                else:
+                    draw_text_styled(self.screen,"GAME OVER",self.font_big,C_RED,WIN_WIDTH//2,WIN_HEIGHT//2,True)
+                    draw_text_styled(self.screen,"ESC - VOLTAR AO MENU",self.font_small,C_WHITE,WIN_WIDTH//2,WIN_HEIGHT//2+50,True)
+
+            # Eventos
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+                if event.type == pygame.KEYDOWN:
+                    if event.key==pygame.K_ESCAPE:
+                        if self.music_playing:
+                            mixer.music.stop()
+                            self.music_playing = False
+                        return 'menu'
+                    if self.victory and event.key==pygame.K_r:
+                        self.reset_game()
+                        self.victory=False
+
+            pygame.display.update()
+
+# --- HIGH SCORE ---
+class HighScoreScreen:
+    def __init__(self, screen, high_score_ref):
+        self.screen = screen
+        self.clock = pygame.time.Clock()
+        self.high_score_ref = high_score_ref
+        self.font_header = pygame.font.SysFont("Arial",37,bold=True)
+        self.font_score = pygame.font.SysFont("Arial",30,bold=True)
+        self.bg = load_bg("bg.png",C_DARK_BLUE,WIN_WIDTH,WIN_HEIGHT)
+
+    def run(self):
+        while True:
+            self.clock.tick(30)
+            self.screen.blit(self.bg,(0,0))
+            # Fundo do score
+            score_text = str(self.high_score_ref[0])
+            score_surf = self.font_score.render(score_text, True, C_WHITE)
+            rect_bg = score_surf.get_rect(center=(WIN_WIDTH//2,250))
+            rect_bg.inflate_ip(20,10)
+            pygame.draw.rect(self.screen,(0,0,0),rect_bg)
+            draw_text_styled(self.screen,"HIGH SCORE",self.font_header,C_BRIGHT_YELLOW,WIN_WIDTH//2,100,True)
+            draw_text_styled(self.screen,score_text,self.font_score,C_WHITE,WIN_WIDTH//2,250,True)
+            draw_text_styled(self.screen,"ESC - VOLTAR AO MENU",self.font_score,C_YELLOW,WIN_WIDTH//2,400,True)
+            pygame.display.flip()
+            for event in pygame.event.get():
+                if event.type==pygame.QUIT: pygame.quit(); sys.exit()
+                if event.type==pygame.KEYDOWN and event.key==pygame.K_ESCAPE:
+                    return 'menu'
+
+# --- MAIN LOOP ---
+def main():
+    high_score_ref = [0]
+    state = 'menu'
+    menu = Menu(tela)
+    game = Game(tela,high_score_ref)
+    hs_screen = HighScoreScreen(tela,high_score_ref)
+    while True:
+        if state=='menu':
+            state = menu.run()
+        elif state=='game':
+            state = game.run()
+        elif state=='high_score':
+            state = hs_screen.run()
+        elif state=='quit':
+            pygame.quit()
+            sys.exit()
+
+if __name__=="__main__":
+    main()
